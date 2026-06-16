@@ -26,6 +26,17 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Recreate source tree if needed
+        shell: bash
+        run: |
+          if [ ! -d VisualCrawlerApp_v02 ]; then
+            test -f VisualCrawlerApp_v02_source.zip.b64
+            base64 -d VisualCrawlerApp_v02_source.zip.b64 > VisualCrawlerApp_v02_source.zip
+            unzip -o VisualCrawlerApp_v02_source.zip
+          fi
+          test -f VisualCrawlerApp_v02/settings.gradle.kts
+          test -f VisualCrawlerApp_v02/app/src/main/java/com/example/visualcrawler/MainActivity.java
+
       - name: Install Android SDK packages
         shell: bash
         run: |
