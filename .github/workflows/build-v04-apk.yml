@@ -3,6 +3,8 @@ name: Build Visual Crawler v0.4 APK
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
