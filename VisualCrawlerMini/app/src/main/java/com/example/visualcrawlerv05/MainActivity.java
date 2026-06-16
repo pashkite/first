@@ -2,10 +2,10 @@ package com.example.visualcrawlerv05;
 
 import android.annotation.SuppressLint;
 import android.app.*;
+import android.content.*;
+import android.net.*;
 import android.os.*;
 import android.provider.MediaStore;
-import android.content.*;
-import android.net.Uri;
 import android.view.*;
 import android.webkit.*;
 import android.widget.*;
@@ -16,269 +16,76 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class MainActivity extends Activity {
-    private WebView web;
-    private EditText urlInput;
-    private TextView status, result;
-    private final ArrayList<String> links = new ArrayList<>();
-    private final ArrayList<String> linkTitles = new ArrayList<>();
-    private String listPageUrl = "";
-    private String bodySelector = "";
-    private String outputText = "";
-    private final StringBuilder collected = new StringBuilder();
-    private boolean collecting = false;
-    private int currentIndex = 0;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+  WebView w; EditText url; TextView stat,out;
+  ArrayList<String> links=new ArrayList<>(), blocks=new ArrayList<>();
+  String bodySel="", listUrl="", last="";
+  boolean running=false; int idx=0; Handler h=new Handler();
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-    @Override public void onCreate(Bundle b) {
-        super.onCreate(b);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(8,8,8,8);
+  @SuppressLint({"SetJavaScriptEnabled","AddJavascriptInterface"})
+  public void onCreate(Bundle b){
+    super.onCreate(b);
+    LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(10,10,10,10);
+    LinearLayout top=new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL);
+    url=new EditText(this); url.setSingleLine(true); url.setText("https://example.com"); url.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
+    Button go=B("이동"), retry=B("재시도"), chrome=B("Chrome"), help=B("?");
+    go.setOnClickListener(v->go()); retry.setOnClickListener(v->retry()); chrome.setOnClickListener(v->chrome()); help.setOnClickListener(v->help());
+    top.addView(url); top.addView(go); top.addView(retry); top.addView(chrome); top.addView(help);
+    LinearLayout r1=new LinearLayout(this); r1.setOrientation(LinearLayout.HORIZONTAL);
+    Button list=B("목록범위 선택"), body=B("본문영역 선택"), start=B("전체수집 시작");
+    list.setOnClickListener(v->selList()); body.setOnClickListener(v->selBody()); start.setOnClickListener(v->start());
+    r1.addView(list,W()); r1.addView(body,W()); r1.addView(start,W());
+    LinearLayout r2=new LinearLayout(this); r2.setOrientation(LinearLayout.HORIZONTAL);
+    Button save=B("다운로드 저장"), copy=B("결과 복사"), reset=B("초기화");
+    save.setOnClickListener(v->save()); copy.setOnClickListener(v->copy()); reset.setOnClickListener(v->reset());
+    r2.addView(save,W()); r2.addView(copy,W()); r2.addView(reset,W());
+    stat=new TextView(this); stat.setTextSize(13); stat.setPadding(8,8,8,8); st("1. 목록범위 선택 → 2. 글 하나 열기 → 3. 본문영역 선택 → 4. 전체수집 시작");
+    w=new WebView(this); w.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1));
+    WebSettings s=w.getSettings();
+    s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true); s.setLoadsImagesAutomatically(true);
+    s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE); s.setJavaScriptCanOpenWindowsAutomatically(true); s.setSupportMultipleWindows(true);
+    s.setUseWideViewPort(true); s.setLoadWithOverviewMode(false); s.setAllowContentAccess(true); s.setAllowFileAccess(true); s.setUserAgentString(CHROME_UA);
+    if(Build.VERSION.SDK_INT>=26) s.setSafeBrowsingEnabled(false);
+    CookieManager cm=CookieManager.getInstance(); cm.setAcceptCookie(true); if(Build.VERSION.SDK_INT>=21) cm.setAcceptThirdPartyCookies(w,true);
+    w.addJavascriptInterface(new Bridge(),"VC");
+    w.setWebChromeClient(new WebChromeClient(){
+      public boolean onCreateWindow(WebView view, boolean dialog, boolean userGesture, Message resultMsg){
+        WebView.HitTestResult r=view.getHitTestResult(); String t=r!=null?r.getExtra():null; if(t!=null&&t.startsWith("http")){w.loadUrl(t); return false;} return false;
+      }
+    });
+    w.setWebViewClient(new WebViewClient(){
+      public void onPageFinished(WebView v,String u){super.onPageFinished(v,u); url.setText(u); if(running)h.postDelayed(()->grab(),1600);}
+      public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err){ if(Build.VERSION.SDK_INT>=23 && req!=null && req.isForMainFrame()) st("페이지 로드 실패: "+err.getDescription()+". 재시도 또는 Chrome 버튼을 눌러봐."); }
+      @SuppressWarnings("deprecation") public void onReceivedError(WebView v,int code,String desc,String failingUrl){ st("페이지 로드 실패: "+desc+". 재시도 또는 Chrome 버튼을 눌러봐."); }
+      public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req){return false;}
+      @SuppressWarnings("deprecation") public boolean shouldOverrideUrlLoading(WebView v,String u){return false;}
+    });
+    ScrollView sv=new ScrollView(this); sv.setLayoutParams(new LinearLayout.LayoutParams(-1,230)); out=new TextView(this); out.setTextSize(13); out.setPadding(8,8,8,8); out.setText("결과가 여기에 표시돼."); sv.addView(out);
+    root.addView(top); root.addView(r1); root.addView(r2); root.addView(stat); root.addView(w); root.addView(sv); setContentView(root); w.loadUrl(url.getText().toString());
+  }
 
-        LinearLayout top = new LinearLayout(this);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        urlInput = new EditText(this);
-        urlInput.setSingleLine(true);
-        urlInput.setHint("https://example.com");
-        urlInput.setText("https://example.com");
-        urlInput.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        Button go = btn("이동");
-        Button help = btn("?");
-        go.setOnClickListener(v -> openUrl());
-        help.setOnClickListener(v -> showHelp());
-        top.addView(urlInput); top.addView(go); top.addView(help);
+  Button B(String t){Button b=new Button(this);b.setText(t);return b;} LinearLayout.LayoutParams W(){return new LinearLayout.LayoutParams(0,-2,1);} void toast(String m){Toast.makeText(this,m,Toast.LENGTH_SHORT).show();} void st(String m){stat.setText(m+"\n상태: 목록 "+links.size()+"개 / 본문 "+(bodySel.length()>0?"선택됨":"미선택"));}
+  void go(){String u=url.getText().toString().trim(); if(u.length()==0)return; if(!u.startsWith("http://")&&!u.startsWith("https://"))u="https://"+u; w.loadUrl(u);} void retry(){String u=w.getUrl(); if(u==null||u.length()==0)u=url.getText().toString(); if(u!=null&&u.length()>0){st("재시도 중: "+u);w.loadUrl(u);}}
+  void chrome(){try{String u=w.getUrl(); if(u==null||u.length()==0)u=url.getText().toString(); if(!u.startsWith("http"))u="https://"+u; startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(u)));}catch(Exception e){toast("Chrome 열기 실패");}}
+  void selList(){if(running){toast("수집 중");return;} w.evaluateJavascript(JS_LIST,null); st("노란색으로 기억할 글 목록 전체 범위를 터치해.");}
+  void selBody(){if(running){toast("수집 중");return;} w.evaluateJavascript(JS_BODY,null); st("글 내부에서 가져올 본문 영역을 터치해.");}
+  void start(){if(links.isEmpty()){toast("목록범위 먼저 선택");return;} if(bodySel.length()==0){toast("본문영역 먼저 선택");return;} blocks.clear(); idx=0; running=true; st("전체수집 시작: 0 / "+links.size()); w.loadUrl(links.get(0));}
+  void grab(){if(!running||idx>=links.size())return; String q=JSONObject.quote(bodySel); String js="(function(){function C(t){return (t||'').replace(/\\u00a0/g,' ').replace(/[ \\t]+/g,' ').replace(/\\n{3,}/g,'\\n\\n').trim()}var e=null;try{e=document.querySelector("+q+")}catch(x){}return JSON.stringify({title:document.title||'',url:location.href,text:e?C(e.innerText||e.textContent):''})})()"; w.evaluateJavascript(js,v->got(v));}
+  void got(String v){try{if(v==null)v="{}"; if(v.startsWith("\"")&&v.endsWith("\""))v=new JSONArray("["+v+"]").getString(0); JSONObject o=new JSONObject(v); String title=o.optString("title","글 "+(idx+1)); String text=o.optString("text",""); String u=o.optString("url",links.get(idx)); blocks.add(title+"\n"+u+"\n\n"+(text.length()>0?text:"[본문을 찾지 못했어. 본문영역을 다시 선택해봐.]")+"\n\n------------------------------\n"); idx++; last=join(); out.setText("수집 중: "+idx+" / "+links.size()+"\n\n"+last); if(idx<links.size()){st("수집 중: "+idx+" / "+links.size()); w.loadUrl(links.get(idx));}else{running=false; st("수집 완료. 다운로드 저장을 눌러 txt로 저장해."); toast("수집 완료");}}catch(Exception e){running=false;st("수집 오류: "+e.getMessage());}}
+  String join(){StringBuilder sb=new StringBuilder();for(String x:blocks)sb.append(x).append('\n');return sb.toString().trim();}
+  void copy(){String t=last.length()>0?last:out.getText().toString(); ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("visual crawler",t)); toast("복사 완료");}
+  void save(){String t=last.length()>0?last:out.getText().toString(); if(t.trim().length()==0){toast("저장할 결과 없음");return;} String name="visual_crawler_"+new SimpleDateFormat("yyyyMMdd_HHmmss",Locale.KOREA).format(new Date())+".txt"; try{ if(Build.VERSION.SDK_INT>=29){ContentValues cv=new ContentValues();cv.put(MediaStore.Downloads.DISPLAY_NAME,name);cv.put(MediaStore.Downloads.MIME_TYPE,"text/plain");cv.put(MediaStore.Downloads.IS_PENDING,1);Uri uri=getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,cv);OutputStream os=getContentResolver().openOutputStream(uri);os.write(t.getBytes(StandardCharsets.UTF_8));os.close();cv.clear();cv.put(MediaStore.Downloads.IS_PENDING,0);getContentResolver().update(uri,cv,null,null);}else{File d=Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);d.mkdirs();FileOutputStream f=new FileOutputStream(new File(d,name));f.write(t.getBytes(StandardCharsets.UTF_8));f.close();} st("저장 완료: Download/"+name); toast("저장 완료"); }catch(Exception e){ st("저장 실패: "+e.getMessage()); toast("저장 실패"); }}
+  void reset(){ running=false; links.clear(); bodySel=""; listUrl=""; last=""; blocks.clear(); out.setText("초기화 완료."); st("초기화 완료. 목록범위 선택부터 시작해."); }
+  void help(){new AlertDialog.Builder(this).setTitle("사용법").setMessage("1. 목록 페이지에서 [목록범위 선택]을 누르고 글 목록 전체를 감싸는 영역을 터치해.\n\n2. 앱이 그 안의 글 링크를 기억해. 글 내부 페이지로 이동해도 기억은 유지돼.\n\n3. 글 하나를 열고 [본문영역 선택]을 눌러 가져올 본문 부분을 터치해.\n\n4. [전체수집 시작]을 누르면 기억한 링크를 하나씩 열어 본문 텍스트만 수집해.\n\n5. [다운로드 저장]을 누르면 Download 폴더에 txt로 저장돼.\n\n접속 오류가 뜨면 [재시도]를 누르고, Chrome에서는 열리는데 앱에서만 안 열리면 [Chrome]으로 확인해봐.").setPositiveButton("확인",null).show();}
 
-        LinearLayout tools1 = new LinearLayout(this);
-        tools1.setOrientation(LinearLayout.HORIZONTAL);
-        Button listBtn = btn("목록영역 선택");
-        Button bodyBtn = btn("본문영역 선택");
-        Button startBtn = btn("전체수집 시작");
-        listBtn.setOnClickListener(v -> enableListSelect());
-        bodyBtn.setOnClickListener(v -> enableBodySelect());
-        startBtn.setOnClickListener(v -> startCollect());
-        tools1.addView(listBtn, weight()); tools1.addView(bodyBtn, weight()); tools1.addView(startBtn, weight());
+  public class Bridge{
+    @JavascriptInterface public void list(String json){ runOnUiThread(()->{try{JSONObject o=new JSONObject(json); JSONArray a=o.getJSONArray("links"); LinkedHashSet<String> set=new LinkedHashSet<>(); for(int i=0;i<a.length();i++){String x=a.optString(i); if(x.startsWith("http"))set.add(x);} links.clear(); links.addAll(set); listUrl=o.optString("url",w.getUrl()); out.setText("목록범위 선택 완료\n\n기억한 글 링크: "+links.size()+"개\n목록 페이지: "+listUrl+"\n\n선택 영역 미리보기:\n"+o.optString("preview")+"\n\n글 내부로 들어가도 이 목록은 계속 기억돼."); st("목록 "+links.size()+"개 기억됨. 샘플글 열기 또는 직접 글 하나 접속 후 본문영역 선택.");}catch(Exception e){st("목록 처리 오류: "+e.getMessage());}});}
+    @JavascriptInterface public void body(String sel,String preview){ runOnUiThread(()->{ bodySel=sel; out.setText("본문영역 선택 완료\n\n본문 미리보기:\n"+preview+"\n\n목록 "+links.size()+"개는 계속 기억 중. 이제 전체수집 시작."); st("본문영역 기억됨. 전체수집 시작 가능."); });}
+    @JavascriptInterface public void err(String m){ runOnUiThread(()->st("오류: "+m)); }
+  }
+  public void onBackPressed(){ if(running){toast("수집 중");return;} if(w.canGoBack())w.goBack(); else super.onBackPressed(); }
 
-        LinearLayout tools2 = new LinearLayout(this);
-        tools2.setOrientation(LinearLayout.HORIZONTAL);
-        Button saveBtn = btn("다운로드 저장");
-        Button copyBtn = btn("결과 복사");
-        Button resetBtn = btn("초기화");
-        saveBtn.setOnClickListener(v -> saveDownloads());
-        copyBtn.setOnClickListener(v -> copyResult());
-        resetBtn.setOnClickListener(v -> resetState());
-        tools2.addView(saveBtn, weight()); tools2.addView(copyBtn, weight()); tools2.addView(resetBtn, weight());
-
-        status = new TextView(this);
-        status.setTextSize(13f);
-        status.setPadding(8,8,8,8);
-        status.setText("1. 목록 페이지에서 목록영역 선택 → 2. 글 하나 열기 → 3. 본문영역 선택 → 4. 전체수집 시작");
-
-        web = new WebView(this);
-        web.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setLoadsImagesAutomatically(true);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        web.addJavascriptInterface(new Bridge(), "VisualCrawler");
-        web.setWebChromeClient(new WebChromeClient());
-        web.setWebViewClient(new WebViewClient(){
-            @Override public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                if (collecting) handler.postDelayed(() -> extractCurrentBody(), 1200);
-            }
-        });
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 230));
-        result = new TextView(this);
-        result.setTextSize(13f);
-        result.setPadding(8,8,8,8);
-        result.setText("결과가 여기에 표시돼.");
-        scroll.addView(result);
-
-        root.addView(top); root.addView(tools1); root.addView(tools2); root.addView(status); root.addView(web); root.addView(scroll);
-        setContentView(root);
-        web.loadUrl(urlInput.getText().toString());
-    }
-
-    private Button btn(String t){ Button b=new Button(this); b.setText(t); return b; }
-    private LinearLayout.LayoutParams weight(){ return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1); }
-    private void toast(String m){ Toast.makeText(this, m, Toast.LENGTH_SHORT).show(); }
-    private void setStatus(String m){ status.setText(m); }
-
-    private void openUrl(){
-        String u = urlInput.getText().toString().trim();
-        if(u.length()==0) return;
-        if(!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
-        web.loadUrl(u);
-    }
-
-    private String asset(String name){
-        try(InputStream in=getAssets().open(name)){
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buf = new byte[4096]; int n;
-            while((n=in.read(buf))>0) out.write(buf,0,n);
-            return out.toString("UTF-8");
-        }catch(Exception e){ return "window.VisualCrawler.onError('asset load failed: " + e.getMessage().replace("'","") + "');"; }
-    }
-
-    private void enableListSelect(){
-        if(collecting){ toast("수집 중에는 선택할 수 없어."); return; }
-        web.evaluateJavascript(asset("select_list.js"), null);
-    }
-
-    private void enableBodySelect(){
-        if(collecting){ toast("수집 중에는 선택할 수 없어."); return; }
-        web.evaluateJavascript(asset("select_body.js"), null);
-    }
-
-    private void startCollect(){
-        if(links.isEmpty()){ toast("먼저 목록영역을 선택해."); return; }
-        if(bodySelector.length()==0){ toast("샘플 글에서 본문영역을 선택해."); return; }
-        collected.setLength(0);
-        outputText = "";
-        currentIndex = 0;
-        collecting = true;
-        setStatus("전체수집 시작: 0 / " + links.size());
-        web.loadUrl(links.get(0));
-    }
-
-    private void extractCurrentBody(){
-        if(!collecting || currentIndex>=links.size()) return;
-        String selector = JSONObject.quote(bodySelector);
-        String js = "(function(){" +
-                "function clean(t){return (t||'').replace(/\\u00a0/g,' ').replace(/[ \\t]+/g,' ').replace(/\\n{3,}/g,'\\n\\n').trim();}" +
-                "var el=null;try{el=document.querySelector(" + selector + ");}catch(e){}" +
-                "var txt=el?clean(el.innerText||el.textContent):'';" +
-                "window.VisualCrawler.onBodyExtracted(JSON.stringify({title:document.title||'',url:location.href,text:txt}));" +
-                "})();";
-        web.evaluateJavascript(js, null);
-    }
-
-    private void finishCollect(){
-        collecting = false;
-        outputText = collected.toString().trim();
-        if(outputText.length()==0) outputText = "수집된 본문이 없어. 본문 선택 영역을 다시 잡아봐.";
-        result.setText(outputText);
-        setStatus("수집 완료: " + links.size() + "개 링크 처리. 다운로드 저장을 누르면 Download 폴더에 txt로 저장돼.");
-        toast("수집 완료");
-    }
-
-    private void saveDownloads(){
-        String txt = outputText.length()>0 ? outputText : result.getText().toString();
-        if(txt.trim().length()==0 || txt.equals("결과가 여기에 표시돼.")){ toast("저장할 결과가 없어."); return; }
-        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.KOREA).format(new Date());
-        String fileName = "visual_crawler_" + stamp + ".txt";
-        try{
-            if(Build.VERSION.SDK_INT >= 29){
-                ContentValues cv = new ContentValues();
-                cv.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
-                cv.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
-                cv.put(MediaStore.Downloads.IS_PENDING, 1);
-                Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
-                if(uri==null) throw new IOException("MediaStore insert failed");
-                try(OutputStream os = getContentResolver().openOutputStream(uri)){
-                    if(os==null) throw new IOException("OutputStream null");
-                    os.write(txt.getBytes(StandardCharsets.UTF_8));
-                }
-                cv.clear(); cv.put(MediaStore.Downloads.IS_PENDING, 0);
-                getContentResolver().update(uri, cv, null, null);
-            }else{
-                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                if(!dir.exists()) dir.mkdirs();
-                try(FileOutputStream fos = new FileOutputStream(new File(dir, fileName))){ fos.write(txt.getBytes(StandardCharsets.UTF_8)); }
-            }
-            toast("Download 폴더에 저장됨: " + fileName);
-            setStatus("저장 완료: Download/" + fileName);
-        }catch(Exception e){ toast("저장 실패: " + e.getMessage()); setStatus("저장 실패: " + e.getMessage()); }
-    }
-
-    private void copyResult(){
-        String txt = outputText.length()>0 ? outputText : result.getText().toString();
-        ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("visual crawler", txt));
-        toast("복사 완료");
-    }
-
-    private void resetState(){
-        links.clear(); linkTitles.clear(); listPageUrl=""; bodySelector=""; outputText=""; collected.setLength(0); collecting=false; currentIndex=0;
-        result.setText("결과가 여기에 표시돼.");
-        setStatus("초기화 완료. 목록영역 선택부터 다시 시작해.");
-    }
-
-    private void showHelp(){
-        new AlertDialog.Builder(this)
-                .setTitle("사용법")
-                .setMessage("1. 블로그 글 목록 페이지에서 '목록영역 선택'을 누르고 글 목록 전체를 감싸는 영역을 터치해.\n\n"+
-                        "2. 앱이 그 영역 안의 글 링크를 기억해. 내부 글 페이지로 이동해도 기억은 유지돼.\n\n"+
-                        "3. 목록 중 글 하나를 직접 눌러 들어간 뒤 '본문영역 선택'을 누르고 가져올 본문 부분을 터치해.\n\n"+
-                        "4. '전체수집 시작'을 누르면 기억한 링크들을 순서대로 열고, 각 글에서 선택한 본문 영역의 보이는 텍스트만 가져와.\n\n"+
-                        "5. '다운로드 저장'을 누르면 Download 폴더에 txt로 저장돼.")
-                .setPositiveButton("확인", null).show();
-    }
-
-    @Override public void onBackPressed(){
-        if(web!=null && web.canGoBack()) web.goBack(); else super.onBackPressed();
-    }
-
-    public class Bridge {
-        @JavascriptInterface public void onInfo(String msg){ runOnUiThread(() -> setStatus(msg + stateLine())); }
-        @JavascriptInterface public void onError(String msg){ runOnUiThread(() -> { setStatus("오류: " + msg); toast("오류"); }); }
-
-        @JavascriptInterface public void onListSelected(String raw){
-            runOnUiThread(() -> {
-                try{
-                    JSONObject obj = new JSONObject(raw);
-                    JSONArray arr = obj.getJSONArray("links");
-                    links.clear(); linkTitles.clear();
-                    for(int i=0;i<arr.length();i++){
-                        JSONObject it = arr.getJSONObject(i);
-                        String u = it.optString("url", "");
-                        String t = it.optString("text", "");
-                        if(u.length()>0 && !links.contains(u)){ links.add(u); linkTitles.add(t); }
-                    }
-                    listPageUrl = obj.optString("pageUrl", web.getUrl());
-                    setStatus("목록영역 기억됨: " + links.size() + "개 링크. 이제 글 하나를 열고 본문영역을 선택해." + stateLine());
-                    toast("목록 " + links.size() + "개 기억됨");
-                }catch(Exception e){ setStatus("목록 파싱 실패: " + e.getMessage()); }
-            });
-        }
-
-        @JavascriptInterface public void onBodySelected(String selector, String preview){
-            runOnUiThread(() -> {
-                bodySelector = selector;
-                String p = preview==null ? "" : preview;
-                if(p.length()>300) p=p.substring(0,300)+"...";
-                result.setText("본문 선택 미리보기\n\n" + p);
-                setStatus("본문영역 기억됨. 이제 전체수집 시작을 누르면 목록의 모든 글을 순회해." + stateLine());
-                toast("본문영역 기억됨");
-            });
-        }
-
-        @JavascriptInterface public void onBodyExtracted(String raw){
-            runOnUiThread(() -> {
-                try{
-                    JSONObject o = new JSONObject(raw);
-                    String title = o.optString("title", "").trim();
-                    String url = o.optString("url", links.get(Math.min(currentIndex, links.size()-1)));
-                    String text = o.optString("text", "").trim();
-                    String listTitle = currentIndex<linkTitles.size()?linkTitles.get(currentIndex):"";
-                    if(title.length()==0) title = listTitle.length()>0 ? listTitle : ("글 " + (currentIndex+1));
-                    collected.append(title).append("\n").append(url).append("\n\n");
-                    if(text.length()==0) collected.append("[본문을 찾지 못했어. 본문영역 선택자를 다시 잡아봐.]\n");
-                    else collected.append(text).append("\n");
-                    collected.append("\n------------------------------\n\n");
-                    currentIndex++;
-                    result.setText("수집 중: " + currentIndex + " / " + links.size() + "\n\n" + collected.toString());
-                    setStatus("수집 중: " + currentIndex + " / " + links.size() + stateLine());
-                    if(currentIndex < links.size()) web.loadUrl(links.get(currentIndex)); else finishCollect();
-                }catch(Exception e){ collecting=false; setStatus("수집 오류: " + e.getMessage()); }
-            });
-        }
-    }
-
-    private String stateLine(){
-        return "\n상태: 목록 " + links.size() + "개 기억됨 / 본문 " + (bodySelector.length()>0?"선택됨":"미선택");
-    }
+  static final String CHROME_UA="Mozilla/5.0 (Linux; Android 14; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36";
+  static final String COMMON="function C(t){return (t||'').replace(/\\u00a0/g,' ').replace(/[ \\t]+/g,' ').replace(/\\n{3,}/g,'\\n\\n').trim()}\n"+"function css(e){if(!e)return'';if(e.id&&!/^\\d+$/.test(e.id))return'#'+CSS.escape(e.id);var p=[];while(e&&e!==document.body){var n=e.tagName.toLowerCase();var cs=Array.from(e.classList||[]).filter(c=>c&&!c.startsWith('__vc')&&!/^\\d+$/.test(c)).slice(0,2);if(cs.length)n+='.'+cs.map(CSS.escape).join('.');var pa=e.parentElement;if(pa){var s=Array.from(pa.children).filter(x=>x.tagName===e.tagName);if(s.length>1)n+=':nth-of-type('+(s.indexOf(e)+1)+')'}p.unshift(n);e=pa}return p.join(' > ')}\n"+"function sty(){if(document.getElementById('__vcsty'))return;var s=document.createElement('style');s.id='__vcsty';s.textContent='.__vcpick{outline:4px solid #ffd000!important;outline-offset:2px!important;background:rgba(255,208,0,.12)!important}';document.documentElement.appendChild(s)}\n"+"function clr(){document.querySelectorAll('.__vcpick').forEach(e=>e.classList.remove('__vcpick'))}\n";
+  static final String JS_LIST="(function(){try{"+COMMON+"sty();function ls(r){var o=[];Array.from(r.querySelectorAll('a[href]')).forEach(a=>{try{var h=new URL(a.getAttribute('href'),location.href).href;if(/^https?:/.test(h))o.push(h)}catch(e){}});return Array.from(new Set(o))}"+"function choose(c){var b=c,bs=-1,cur=c;for(var d=0;d<9&&cur&&cur!==document.body;d++,cur=cur.parentElement){var r=cur.getBoundingClientRect(), l=ls(cur).length, t=C(cur.innerText).length, sc=l*100000+Math.min((r.width||0)*(r.height||0),900000)+Math.min(t,4000);if(l>=2&&sc>bs){b=cur;bs=sc}}return b}"+"function pick(ev){ev.preventDefault();ev.stopPropagation();var p=ev.changedTouches?ev.changedTouches[0]:ev,c=document.elementFromPoint(p.clientX,p.clientY);if(!c){VC.err('선택 실패');return false}var b=choose(c);clr();b.classList.add('__vcpick');VC.list(JSON.stringify({url:location.href,links:ls(b),preview:C(b.innerText).slice(0,700)}));document.removeEventListener('click',pick,true);document.removeEventListener('touchend',pick,true);return false}"+"document.addEventListener('click',pick,true);document.addEventListener('touchend',pick,true);}catch(e){VC.err(String(e&&e.message?e.message:e))}})();";
+  static final String JS_BODY="(function(){try{"+COMMON+"sty();function choose(c){var b=c,cur=c;for(var d=0;d<7&&cur&&cur!==document.body;d++,cur=cur.parentElement){var t=C(cur.innerText),r=cur.getBoundingClientRect();if(t.length>=80&&r.height>=60)b=cur;if(t.length>=300&&r.height>=120){b=cur;break}}return b}"+"function pick(ev){ev.preventDefault();ev.stopPropagation();var p=ev.changedTouches?ev.changedTouches[0]:ev,c=document.elementFromPoint(p.clientX,p.clientY);if(!c){VC.err('선택 실패');return false}var b=choose(c);clr();b.classList.add('__vcpick');VC.body(css(b),C(b.innerText).slice(0,900));document.removeEventListener('click',pick,true);document.removeEventListener('touchend',pick,true);return false}"+"document.addEventListener('click',pick,true);document.addEventListener('touchend',pick,true);}catch(e){VC.err(String(e&&e.message?e.message:e))}})();";
 }
