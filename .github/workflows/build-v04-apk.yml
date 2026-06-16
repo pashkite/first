@@ -1,8 +1,8 @@
-name: Build Visual Crawler v0.4 APK
+name: Build Visual Crawler v0.5 APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ visual-crawler-v05-build ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -28,16 +28,6 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Recreate Visual Crawler v0.4 project
-        shell: bash
-        run: |
-          rm -rf VisualCrawlerApp_v02
-          test -f VisualCrawlerApp_v04_source.zip.b64
-          base64 -d VisualCrawlerApp_v04_source.zip.b64 > VisualCrawlerApp_v04_source.zip
-          unzip -o VisualCrawlerApp_v04_source.zip
-          test -f VisualCrawlerApp_v02/settings.gradle.kts
-          test -f VisualCrawlerApp_v02/app/src/main/java/com/example/visualcrawler/MainActivity.java
-
       - name: Install Android SDK packages
         shell: bash
         run: |
@@ -47,12 +37,12 @@ jobs:
       - name: Build debug APK
         shell: bash
         run: |
-          cd VisualCrawlerApp_v02
+          cd VisualCrawlerV05
           gradle assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: visual-crawler-v04-debug-apk
-          path: VisualCrawlerApp_v02/app/build/outputs/apk/debug/app-debug.apk
+          name: visual-crawler-v05-debug-apk
+          path: VisualCrawlerV05/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
