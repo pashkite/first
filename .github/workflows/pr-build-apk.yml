@@ -1,0 +1,53 @@
+name: PR Build Visual Crawler APK
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Recreate Android project from embedded ZIP
+        shell: bash
+        run: |
+          awk '/ZIPB64/{flag=!flag; next} flag' .github/workflows/build-apk.yml > VisualCrawlerApp_Java_APKReady.zip.b64
+          base64 -d VisualCrawlerApp_Java_APKReady.zip.b64 > VisualCrawlerApp_Java_APKReady.zip
+          unzip -o VisualCrawlerApp_Java_APKReady.zip
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          cd VisualCrawlerApp_Java_APKReady
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-crawler-debug-apk
+          path: VisualCrawlerApp_Java_APKReady/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
