@@ -26,13 +26,6 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Recreate Android project from v0.2 embedded ZIP
-        shell: bash
-        run: |
-          awk '/ZIPB64/{flag=!flag; next} flag' .github/workflows/build-v02-apk.yml > VisualCrawlerApp_v02_source.zip.b64
-          base64 -d VisualCrawlerApp_v02_source.zip.b64 > VisualCrawlerApp_v02_source.zip
-          unzip -o VisualCrawlerApp_v02_source.zip
-
       - name: Install Android SDK packages
         shell: bash
         run: |
