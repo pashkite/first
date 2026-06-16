@@ -1,0 +1,56 @@
+name: Build Visual Crawler v0.4 APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Recreate Visual Crawler v0.4 project
+        shell: bash
+        run: |
+          rm -rf VisualCrawlerApp_v02
+          test -f VisualCrawlerApp_v04_source.zip.b64
+          base64 -d VisualCrawlerApp_v04_source.zip.b64 > VisualCrawlerApp_v04_source.zip
+          unzip -o VisualCrawlerApp_v04_source.zip
+          test -f VisualCrawlerApp_v02/settings.gradle.kts
+          test -f VisualCrawlerApp_v02/app/src/main/java/com/example/visualcrawler/MainActivity.java
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          cd VisualCrawlerApp_v02
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-crawler-v04-debug-apk
+          path: VisualCrawlerApp_v02/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
