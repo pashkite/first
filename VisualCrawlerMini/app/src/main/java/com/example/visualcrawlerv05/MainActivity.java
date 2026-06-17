@@ -22,15 +22,16 @@ public class MainActivity extends Activity {
   WebView web; EditText urlInput; TextView status, result;
   ArrayList<String> links=new ArrayList<>(), titles=new ArrayList<>(), htmlBlocks=new ArrayList<>();
   LinkedHashSet<String> imageUrls=new LinkedHashSet<>();
+  HashSet<String> fallbackBusy=new HashSet<>();
   String listPageUrl="", bodySelector="", bodyNote="", outputText="";
   int rawLinkCount=0, uniqueLinkCount=0, filteredLinkCount=0;
-  boolean collecting=false; int currentIndex=0; Handler handler=new Handler(Looper.getMainLooper());
+  boolean collecting=false, htmlFallbackLoading=false; int currentIndex=0; Handler handler=new Handler(Looper.getMainLooper());
 
   @SuppressLint({"SetJavaScriptEnabled","AddJavascriptInterface"})
   public void onCreate(Bundle b){
     super.onCreate(b);
     LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setFitsSystemWindows(true); root.setPadding(dp(10),dp(44),dp(10),dp(10));
-    TextView title=new TextView(this); title.setText("Visual Crawler v0.11 · 드래그/UA호환"); title.setTextSize(15); title.setPadding(4,0,4,6);
+    TextView title=new TextView(this); title.setText("Visual Crawler v0.11 · 드래그/HTML폴백"); title.setTextSize(15); title.setPadding(4,0,4,6);
     LinearLayout top=new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL);
     urlInput=new EditText(this); urlInput.setSingleLine(true); urlInput.setHint("https://example.com"); urlInput.setText("https://example.com"); urlInput.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
     Button go=btn("이동"), help=btn("?"); go.setOnClickListener(v->openUrl()); help.setOnClickListener(v->showHelp()); top.addView(urlInput); top.addView(go); top.addView(help);
@@ -40,7 +41,7 @@ public class MainActivity extends Activity {
     LinearLayout row2=new LinearLayout(this); row2.setOrientation(LinearLayout.HORIZONTAL);
     Button save=btn("ZIP 저장"), copy=btn("미리보기 복사"), reset=btn("초기화");
     save.setOnClickListener(v->saveZip()); copy.setOnClickListener(v->copyResult()); reset.setOnClickListener(v->resetState()); row2.addView(save,weight()); row2.addView(copy,weight()); row2.addView(reset,weight());
-    status=new TextView(this); status.setTextSize(13); status.setPadding(8,8,8,8); setStatus("v0.11: 링크 중복 제거, 과확장 필터, 드래그 본문 선택, WebView UA 호환 패치.");
+    status=new TextView(this); status.setTextSize(13); status.setPadding(8,8,8,8); setStatus("v0.11: 링크 중복 제거, 과확장 필터, 드래그 본문 선택, WebView 실패 시 HTML 폴백.");
     web=new WebView(this); web.setLayoutParams(new LinearLayout.LayoutParams(-1,0,1));
     WebSettings s=web.getSettings();
     s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setDatabaseEnabled(true); s.setLoadsImagesAutomatically(true);
@@ -52,8 +53,8 @@ public class MainActivity extends Activity {
     web.addJavascriptInterface(new Bridge(),"VisualCrawler"); web.setWebChromeClient(new WebChromeClient());
     web.setWebViewClient(new WebViewClient(){
       public void onPageFinished(WebView view,String url){super.onPageFinished(view,url); urlInput.setText(url); if(collecting) handler.postDelayed(()->extractCurrent(),1300);}
-      public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err){if(Build.VERSION.SDK_INT>=23 && req!=null && req.isForMainFrame()) setStatus("페이지 로드 실패: "+err.getDescription()+". v0.11 UA 호환 WebView 사용 중.");}
-      @SuppressWarnings("deprecation") public void onReceivedError(WebView view,int code,String desc,String failingUrl){setStatus("페이지 로드 실패: "+desc+". v0.11 UA 호환 WebView 사용 중.");}
+      public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err){if(Build.VERSION.SDK_INT>=23 && req!=null && req.isForMainFrame()){String u=req.getUrl()==null?view.getUrl():req.getUrl().toString(); setStatus("WebView 직접 로드 실패: "+err.getDescription()+". HTML 폴백 시도 중."); tryHtmlFallback(u,String.valueOf(err.getDescription()));}}
+      @SuppressWarnings("deprecation") public void onReceivedError(WebView view,int code,String desc,String failingUrl){setStatus("WebView 직접 로드 실패: "+desc+". HTML 폴백 시도 중."); tryHtmlFallback(failingUrl,desc);}
     });
     ScrollView sv=new ScrollView(this); sv.setLayoutParams(new LinearLayout.LayoutParams(-1,250)); result=new TextView(this); result.setTextSize(13); result.setPadding(8,8,8,8); result.setText("결과가 여기에 표시돼.\n\n노란색=목록, 초록색=본문요소.\nZIP 저장 시 result.html, images/, links.txt, README.txt가 저장돼."); sv.addView(result);
     root.addView(title); root.addView(top); root.addView(row1); root.addView(row2); root.addView(status); root.addView(web); root.addView(sv); setContentView(root); loadPage(urlInput.getText().toString());
@@ -61,7 +62,13 @@ public class MainActivity extends Activity {
 
   String chromeMobileUserAgent(){return "Mozilla/5.0 (Linux; Android 15; SM-S918N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";}
   HashMap<String,String> pageHeaders(){HashMap<String,String> h=new HashMap<>(); h.put("Accept-Language","ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"); h.put("Upgrade-Insecure-Requests","1"); return h;}
-  void loadPage(String u){try{web.loadUrl(u,pageHeaders());}catch(Exception e){web.loadUrl(u);}}
+  void loadPage(String u){htmlFallbackLoading=false; try{web.loadUrl(u,pageHeaders());}catch(Exception e){web.loadUrl(u);}}
+  void tryHtmlFallback(String u,String reason){if(u==null||u.length()==0||u.startsWith("data:"))return; final String target=u; synchronized(fallbackBusy){if(fallbackBusy.contains(target))return; fallbackBusy.add(target);} new Thread(()->{try{FetchResult r=fetchHtmlSync(target); String html=prepareHtmlForWebView(r.html,r.url); runOnUiThread(()->{htmlFallbackLoading=true; urlInput.setText(r.url); web.loadDataWithBaseURL(r.url,html,"text/html","UTF-8",r.url); setStatus("HTML 폴백 로드 완료. 목록/본문 선택을 계속 진행해.");});}catch(Exception ex){runOnUiThread(()->setStatus("HTML 폴백 실패: "+ex.getClass().getSimpleName()+" · "+(ex.getMessage()==null?"메시지 없음":ex.getMessage())));}finally{synchronized(fallbackBusy){fallbackBusy.remove(target);}}}).start();}
+  static class FetchResult{String url,html; FetchResult(String u,String h){url=u;html=h;}}
+  FetchResult fetchHtmlSync(String target)throws Exception{HttpURLConnection c=(HttpURLConnection)new URL(target).openConnection(); c.setInstanceFollowRedirects(true); c.setConnectTimeout(15000); c.setReadTimeout(20000); c.setRequestMethod("GET"); c.setRequestProperty("User-Agent",chromeMobileUserAgent()); c.setRequestProperty("Accept","text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"); c.setRequestProperty("Accept-Language","ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"); c.setRequestProperty("Cache-Control","no-cache"); try{Uri u=Uri.parse(target); if(u.getScheme()!=null&&u.getHost()!=null)c.setRequestProperty("Referer",u.getScheme()+"://"+u.getHost()+"/");}catch(Exception ignored){} String ck=CookieManager.getInstance().getCookie(target); if(ck!=null)c.setRequestProperty("Cookie",ck); int code=c.getResponseCode(); InputStream in=code>=400?c.getErrorStream():c.getInputStream(); if(in==null)throw new IOException("HTTP "+code); ByteArrayOutputStream out=new ByteArrayOutputStream(); byte[] buf=new byte[8192]; int n; while((n=in.read(buf))>0)out.write(buf,0,n); in.close(); String charset=charsetFrom(c.getContentType()); String finalUrl=c.getURL()==null?target:c.getURL().toString(); String setCookie=c.getHeaderField("Set-Cookie"); if(setCookie!=null)CookieManager.getInstance().setCookie(finalUrl,setCookie); return new FetchResult(finalUrl,new String(out.toByteArray(),charset));}
+  String charsetFrom(String ct){try{if(ct!=null){for(String p:ct.split(";")){p=p.trim().toLowerCase(Locale.ROOT); if(p.startsWith("charset=")){String v=p.substring(8).replace("\"","").trim(); if(v.length()>0)return v;}}}}catch(Exception ignored){} return "UTF-8";}
+  String prepareHtmlForWebView(String html,String base){if(html==null)html=""; if(!html.toLowerCase(Locale.ROOT).contains("<base ")){String baseTag="<base href=\""+escapeAttr(base)+"\">"; if(html.toLowerCase(Locale.ROOT).contains("<head"))html=html.replaceFirst("(?i)<head([^>]*)>","<head$1>"+baseTag); else html="<head>"+baseTag+"</head>"+html;} return html;}
+  String escapeAttr(String s){if(s==null)return ""; return s.replace("&","&amp;").replace("\"","&quot;").replace("<","&lt;").replace(">","&gt;");}
   int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);} Button btn(String t){Button b=new Button(this); b.setText(t); b.setTextSize(12); return b;} LinearLayout.LayoutParams weight(){return new LinearLayout.LayoutParams(0,-2,1);} void toast(String m){Toast.makeText(this,m,Toast.LENGTH_SHORT).show();}
   void setStatus(String m){status.setText(m+"\n상태: 목록 "+links.size()+"개 기억 / 본문 "+(bodySelector.length()>0?"선택됨":"미선택")+(collecting?" / 수집 중 "+currentIndex+"/"+links.size():""));}
   void openUrl(){String u=urlInput.getText().toString().trim(); if(u.length()==0)return; if(!u.startsWith("http://")&&!u.startsWith("https://"))u="https://"+u; loadPage(u);} 
@@ -96,7 +103,7 @@ public class MainActivity extends Activity {
 
   void copyResult(){if(htmlBlocks.isEmpty()){toast("복사할 미리보기 없음");return;} String t="Visual Crawler 미리보기\n전체 HTML은 ZIP 안의 result.html 확인\n\n"+safePreview(strip(previewHtml()),8000); ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("visual crawler preview",t)); toast("미리보기만 복사 완료");}
   void resetState(){collecting=false; links.clear(); titles.clear(); bodySelector=""; bodyNote=""; listPageUrl=""; outputText=""; htmlBlocks.clear(); imageUrls.clear(); rawLinkCount=uniqueLinkCount=filteredLinkCount=0; result.setText("초기화 완료. 목록범위 선택부터 시작해."); setStatus("초기화 완료.");}
-  void showHelp(){new AlertDialog.Builder(this).setTitle("사용법").setMessage("v0.11 드래그/UA호환판\n\n1. 목록범위 선택으로 글 목록 전체를 잡아.\n2. 앱이 같은 링크 중복, 홈/검색/메뉴성 링크를 줄여서 기억해.\n3. 글 하나에서 본문요소 선택을 누르고 시작부터 끝까지 손가락으로 드래그해.\n4. 전체수집 시작을 누르면 같은 요소를 각 글에서 가져와.\n5. ZIP 저장을 누르면 Download 폴더에 zip이 저장돼.\n\n이 빌드는 WebView 차단 사이트 대응을 위해 일반 모바일 Chrome User-Agent를 사용해.").setPositiveButton("확인",null).show();}
+  void showHelp(){new AlertDialog.Builder(this).setTitle("사용법").setMessage("v0.11 드래그/HTML 폴백판\n\n1. 목록범위 선택으로 글 목록 전체를 잡아.\n2. 앱이 같은 링크 중복, 홈/검색/메뉴성 링크를 줄여서 기억해.\n3. 글 하나에서 본문요소 선택을 누르고 시작부터 끝까지 손가락으로 드래그해.\n4. 전체수집 시작을 누르면 같은 요소를 각 글에서 가져와.\n5. ZIP 저장을 누르면 Download 폴더에 zip이 저장돼.\n\nWebView 직접 로드가 ERR_CONNECTION_RESET 등으로 실패하면 앱이 HTML을 직접 받아와서 WebView에 넣는 폴백을 시도해.").setPositiveButton("확인",null).show();}
 
   public class Bridge{
     @JavascriptInterface public void onInfo(String msg){runOnUiThread(()->setStatus(msg));}
